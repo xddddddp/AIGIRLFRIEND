@@ -141,7 +141,7 @@ chmod +x start.sh
 ### Add More Emotions
 Edit `detectar_emocion()` in `backend/main.py`:
 
-```python
+\`\`\`python
 def detectar_emocion(texto: str, annoyance_level: int = 0) -> str:
     # Add your custom emotions here
     if "triste" in texto.lower():
