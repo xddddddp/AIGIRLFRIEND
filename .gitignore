@@ -63,8 +63,9 @@ Thumbs.db
 *.bin
 *.safetensors
 *.onnx
+*.gguf # Ollama models
 
-# Audio files
+# Audio files (temporary recordings/TTS outputs)
 *.wav
 *.mp3
 *.ogg

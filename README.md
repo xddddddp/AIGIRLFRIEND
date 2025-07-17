@@ -1,148 +1,187 @@
-# 🌸 Waifu Assistant - Local AI Girlfriend
+# 🌸 Yuki - Your Local AI Anime Girlfriend
 
-A cute anime-style AI girlfriend that runs completely locally on your PC. Features real-time voice interaction, emotion detection, relationship tracking, and girlfriend-like personality with mood changes.
-
-![Waifu Assistant](https://via.placeholder.com/400x800/9333ea/ffffff?text=Waifu+Assistant+Mobile)
+Meet Yuki, your personal anime girlfriend AI with realistic emotions, powered by local AI models (Ollama, Whisper, Coqui TTS). She gets excited when you're sweet and angry when you're mean - just like a real girlfriend!
 
 ## ✨ Features
 
-- 💕 **Girlfriend Personality**: Acts like a real anime girlfriend with emotions and moods
-- 🎤 **Voice Interaction**: Real-time speech-to-text and text-to-speech
-- 😊 **Dynamic Emotions**: 6 different emotions (neutral, happy, blush, angry, love, annoyed)
-- 🧠 **Relationship Memory**: Tracks your name, relationship level, and annoyance level
-- 📱 **Mobile Optimized**: Phone-width design ready for iOS/Android
-- 🔧 **Fully Local**: No internet required after setup
-- 🎭 **VRM Ready**: Placeholder system ready for VRoid Studio models
-- 💢 **Mood System**: Gets mad at bad behavior, loves good treatment
+### 🧠 **Local AI Models**
+- **Ollama (Mistral)**: For intelligent and expressive chat responses.
+- **Whisper**: For accurate local speech-to-text transcription.
+- **Coqui TTS**: For high-quality local text-to-speech synthesis.
 
-## 🚀 Quick Start
+### 🖼️ **Dynamic Emotions**
+- **Happy/Angry visuals**: Character image changes based on the detected emotion in the conversation.
+- **Expressive responses**: AI personality adapts to the emotional context.
+
+### 🎤 **Voice Interaction**
+- **Speech-to-text**: Talk to Yuki using your microphone.
+- **Text-to-speech**: Yuki responds with her synthesized voice.
+- **Voice toggle**: Easily enable or disable voice responses.
+
+### 💬 **Chat Interface**
+- **Chat messages display**: See your conversation history.
+- **Text input**: Type messages if you prefer.
+
+### 💖 **VRM Model Ready**
+- **Placeholder for 3D model**: The application is set up to integrate a VRM model, allowing you to easily swap out the 2D image for a full 3D character.
+
+## 🚀 Quick Start (Local Setup)
 
 ### Prerequisites
+- **Python 3.8+**
+- **Node.js 16+**
+- **Ollama**: Download and install from [ollama.ai/download](https://ollama.ai/download).
 
-- Python 3.8+
-- Node.js 16+
-- Microphone access
+### Installation & Setup
 
-### One-Command Setup
+1.  **Clone the repository:**
+    \`\`\`bash
+    git clone https://github.com/yourusername/yuki-assistant.git
+    cd yuki-assistant
+    \`\`\`
 
-\`\`\`bash
-git clone https://github.com/yourusername/waifu-assistant.git
-cd waifu-assistant
-chmod +x start.sh
-./start.sh
-\`\`\`
+2.  **Run the setup script:**
+    This script will install Python dependencies (Whisper, Coqui TTS, Ollama Python client) and pull the `mistral` model for Ollama.
+    \`\`\`bash
+    chmod +x scripts/setup-local-ai.sh
+    ./scripts/setup-local-ai.sh
+    \`\`\`
 
-### Manual Setup
+3.  **Start the Ollama server:**
+    Open a **new terminal** and run:
+    \`\`\`bash
+    ollama serve
+    \`\`\`
+    Keep this terminal open as long as you want to use Yuki.
 
-1. **Clone and install**
-   \`\`\`bash
-   git clone https://github.com/yourusername/waifu-assistant.git
-   cd waifu-assistant
-   pip install -r backend/requirements.txt
-   npm install
-   \`\`\`
-
-2. **Download AI models**
-   \`\`\`bash
-   python backend/setup.py
-   \`\`\`
-
-3. **Start servers**
-   \`\`\`bash
-   # Terminal 1: Backend
-   python backend/main.py
-   
-   # Terminal 2: Frontend  
-   npm run dev
-   \`\`\`
-
-4. **Open app**
-   Navigate to `http://localhost:3000`
-
-## 💕 How to Use
+4.  **Start the application:**
+    Open **another new terminal** in the project root and run:
+    \`\`\`bash
+    chmod +x start.sh
+    ./start.sh
+    \`\`\`
+    This script will start both the Python backend (FastAPI) and the Next.js frontend.
 
 ### First Meeting
-- She'll greet you and ask for your name
-- Be nice and she'll love you more! 💖
-- Be mean and she'll get annoyed! 😤
+1.  Open `http://localhost:3000` in your browser.
+2.  Yuki will greet you!
+3.  Start chatting with her using your voice or text.
 
-### Relationship System
-- **Love Level**: Increases with compliments and kindness
-- **Annoyance Level**: Increases with rude behavior
-- **Memory**: Remembers your name and conversation topics
+## 🛠️ Troubleshooting
 
-### Voice Commands
-- Click microphone to talk
-- She responds with voice automatically
-- Toggle speaker icon to mute/unmute
+### **Common Issues**
 
-### Personality Traits
-- **Happy** when you're sweet to her
-- **Blushing** when you flirt or compliment
-- **Angry** when you're rude or annoying  
-- **In Love** when relationship level is high
-- **Annoyed** when you're being obnoxious
+1.  **"Connection Error" banner:**
+    *   Ensure the Python backend is running. Check the terminal where you ran `./start.sh` for errors.
+    *   Verify Ollama server is running in its dedicated terminal (`ollama serve`).
+    *   Check your browser's developer console for more specific network errors.
 
-## 🎭 Emotions & Responses
+2.  **"No voice output" / "No transcription":**
+    *   Check the terminal where `python3 backend/main.py` is running for errors related to Whisper or Coqui TTS. They might not have installed correctly or might be missing underlying system dependencies (e.g., `ffmpeg` for Whisper).
+    *   Ensure your microphone is enabled and accessible by your browser.
 
-| Emotion | Triggers | Example Response |
-|---------|----------|------------------|
-| 💖 Love | "te amo", "hermosa", "preciosa" | "¡Kyaa! ¡Te amo tanto, mi amor! 😍💖" |
-| 😊 Happy | "feliz", "genial", "increíble" | "¡Ehehe~ Me alegra verte tan contento! ✨" |
-| 😊💕 Blush | "me gustas", "beso", "abrazo" | "¡Kyaa! ¡Me haces sonrojar! 😊💕" |
-| 😤 Angry | "idiota", "estúpido", "cállate" | "¡Mou! ¡Ya me tienes harta! 😤💢" |
-| 😒 Annoyed | Repetitive or boring messages | "Ehh... me estás molestando un poquito... 😒" |
+3.  **Ollama model not found:**
+    *   Make sure you ran `ollama pull mistral` successfully.
+    *   Ensure the Ollama server is running (`ollama serve`).
 
-## 🔧 Technical Stack
+## 🤝 Contributing
 
-### Frontend (Mobile-Optimized)
-- **Next.js 14** with TypeScript
-- **Tailwind CSS** for mobile-first design
-- **Web APIs** for microphone and audio
-- **Phone-width layout** (max-width: 400px)
+Feel free to fork the repository, create feature branches, and submit pull requests!
 
-### Backend (Local AI)
-- **FastAPI** for REST API
-- **OpenAI Whisper (Tiny)** for speech-to-text
-- **Coqui TTS** with Spanish voice models
-- **OpenAI GPT-3.5** for girlfriend personality
-- **Custom emotion detection** in Spanish
+---
 
-### AI Models Used
-- **Whisper Tiny**: Fast speech recognition
-- **Coqui TTS Spanish**: High-quality Spanish voice
-- **GPT-3.5 Turbo**: Girlfriend personality responses
-- **Custom NLP**: Spanish emotion detection
+**Made with 💖 for everyone who wants a loving AI companion with a a local voice**
+\`\`\`
 
-## 📱 Mobile Features
+```plaintext file=".gitignore"
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
 
-- **Phone-optimized UI** (400px width)
-- **Touch-friendly buttons** 
-- **Safe area support** for iOS
-- **Responsive design**
-- **Optimized for portrait mode**
+# Next.js
+.next/
+out/
+build/
 
-## 🎮 Personality Examples
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
-### When you're sweet:
-**You**: "Hola hermosa, te amo"  
-**Her**: "¡Kyaa! ¡Mi corazón late súper rápido! ¡Te amo tanto, mi amor! 😍💖"
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
 
-### When you're rude:
-**You**: "Eres estúpida"  
-**Her**: "¡Mou! ¡Ya me tienes harta! ¡Deja de ser tan molesto! 😤💢"
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
 
-### When you're boring:
-**You**: "hola hola hola hola"  
-**Her**: "Ehh... me estás molestando un poquito... 😒"
+# Temporary files
+tmp/
+temp/
+.tmp/
+*.tmp
 
-## 🛠️ Customization
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
-### Add More Emotions
-Edit `detectar_emocion()` in `backend/main.py`:
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-\`\`\`python
-def detectar_emocion(texto: str, annoyance_level: int = 0) -> str:
-    # Add your custom emotions here
-    if "triste" in texto.lower():
-        return "sad"
+# AI Model files (too large for git)
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+*.gguf # Ollama models
+
+# Audio files (temporary recordings/TTS outputs)
+*.wav
+*.mp3
+*.ogg
+*.flac
+*.webm
+
+# Python cache
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# Jupyter notebooks
+*.ipynb_checkpoints
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3

@@ -1,10 +1,7 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 import uvicorn
-import whisper
-import torch
-from TTS.api import TTS
 import tempfile
 import os
 import json
@@ -12,46 +9,47 @@ from datetime import datetime
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 import re
-import openai
 import random
+import io
+import asyncio
 
-app = FastAPI(title="Waifu Assistant API")
+# Local AI imports
+try:
+    import whisper
+    WHISPER_AVAILABLE = True
+    print("✅ Whisper model loaded successfully.")
+except Exception as e:
+    print(f"⚠️ Whisper not available: {e}. Speech-to-text will use fallback.")
+    WHISPER_AVAILABLE = False
+
+try:
+    from TTS.api import TTS
+    coqui_tts = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC", progress_bar=False)
+    COQUI_AVAILABLE = True
+    print("✅ Coqui TTS initialized successfully.")
+except Exception as e:
+    print(f"⚠️ Coqui TTS not available: {e}. Text-to-speech will use fallback.")
+    COQUI_AVAILABLE = False
+
+try:
+    from ollama import Client
+    ollama_client = Client(host='http://localhost:11434') # Default Ollama host
+    OLLAMA_AVAILABLE = True
+    print("✅ Ollama client initialized successfully.")
+except Exception as e:
+    print(f"⚠️ Ollama client not available: {e}. Chat will use fallback.")
+    OLLAMA_AVAILABLE = False
+
+app = FastAPI(title="Yuki Assistant Local API")
 
 # Enable CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000"],  # Allow Next.js frontend
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Set OpenAI API key
-openai.api_key = "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"
-
-# Initialize models
-print("🎤 Loading Whisper model...")
-try:
-    whisper_model = whisper.load_model("tiny")
-    print("✅ Whisper loaded successfully!")
-except Exception as e:
-    print(f"❌ Error loading Whisper: {e}")
-    whisper_model = None
-
-print("🎵 Loading TTS model...")
-try:
-    # Use a high-quality Spanish female voice
-    tts = TTS(model_name="tts_models/es/css10/vits", progress_bar=False)
-    print("✅ TTS loaded successfully!")
-except Exception as e:
-    print(f"❌ Error loading TTS: {e}")
-    try:
-        # Fallback to English model
-        tts = TTS(model_name="tts_models/en/ljspeech/tacotron2-DDC", progress_bar=False)
-        print("✅ TTS fallback loaded!")
-    except Exception as e2:
-        print(f"❌ Error loading TTS fallback: {e2}")
-        tts = None
 
 class ChatRequest(BaseModel):
     message: str
@@ -61,253 +59,203 @@ class ChatRequest(BaseModel):
 class TTSRequest(BaseModel):
     text: str
 
-def detectar_emocion(texto: str, annoyance_level: int = 0) -> str:
-    """Enhanced Spanish emotion detection with girlfriend personality"""
+def detectar_emocion(texto: str) -> str:
+    """Enhanced Spanish emotion detection"""
     texto = texto.lower()
     
-    # Check for annoying/bad behavior
-    bad_words = ["idiota", "estúpido", "cállate", "feo", "odio", "asco", "malo", "tonto"]
-    repetitive = len(set(texto.split())) < len(texto.split()) * 0.5  # Too repetitive
-    
-    if any(word in texto for word in bad_words) or repetitive:
-        return "angry" if annoyance_level > 50 else "annoyed"
-    
-    # Love/romantic expressions
-    if any(x in texto for x in ["te amo", "te quiero", "mi amor", "cariño", "hermosa", "linda", "preciosa", "novia"]):
-        return "love"
-    
-    # Shy/blush expressions
-    elif any(x in texto for x in ["tímido", "sonrojo", "me gustas", "nervioso", "enamorado", "beso", "abrazo"]):
-        return "blush"
-    
-    # Happy expressions
-    elif any(x in texto for x in ["feliz", "genial", "me alegra", "contento", "fantástico", "increíble", "divertido"]):
-        return "happy"
-    
-    # Angry expressions
-    elif any(x in texto for x in ["enojo", "enojado", "molesto", "rabia", "furioso"]):
-        return "angry"
-    
-    else:
-        return "neutral"
-
-def extract_name_from_message(message: str) -> Optional[str]:
-    """Extract name from user message"""
-    patterns = [
-        r"me llamo (\w+)",
-        r"mi nombre es (\w+)",
-        r"soy (\w+)",
-        r"llámame (\w+)",
-        r"mi nombre (\w+)",
-        r"nombre es (\w+)",
+    # Angry indicators
+    angry_words = [
+        "enojado", "molesto", "furioso", "odio", "idiota", "estúpido", "malo",
+        "horrible", "terrible", "asco", "mierda", "joder", "angry", "mad",
+        "hate", "stupid", "bad", "terrible", "shit"
     ]
-    
-    for pattern in patterns:
-        match = re.search(pattern, message.lower())
-        if match:
-            return match.group(1).capitalize()
-    return None
 
-def update_memory(message: str, current_memory: Dict) -> Dict:
-    """Update conversation memory with girlfriend-like tracking"""
-    # Extract name if mentioned
-    name = extract_name_from_message(message)
-    if name:
-        current_memory["userName"] = name
-        current_memory["relationshipLevel"] = min(100, current_memory.get("relationshipLevel", 0) + 10)
-    
-    # Update relationship level based on message content
-    love_words = ["te amo", "te quiero", "hermosa", "linda", "preciosa", "amor"]
-    bad_words = ["idiota", "estúpido", "cállate", "feo", "odio", "asco"]
-    
-    if any(word in message.lower() for word in love_words):
-        current_memory["relationshipLevel"] = min(100, current_memory.get("relationshipLevel", 0) + 5)
-        current_memory["annoyanceLevel"] = max(0, current_memory.get("annoyanceLevel", 0) - 10)
-    elif any(word in message.lower() for word in bad_words):
-        current_memory["annoyanceLevel"] = min(100, current_memory.get("annoyanceLevel", 0) + 20)
-        current_memory["relationshipLevel"] = max(0, current_memory.get("relationshipLevel", 0) - 5)
-    
-    # Extract topics
-    topics = current_memory.get("topics", [])
-    keywords = ["trabajo", "familia", "hobby", "música", "anime", "juegos", "comida", "viaje", "película", "libro"]
-    for keyword in keywords:
-        if keyword in message.lower() and keyword not in topics:
-            topics.append(keyword)
-    
-    current_memory["topics"] = topics[-10:]
-    current_memory["lastEmotion"] = detectar_emocion(message, current_memory.get("annoyanceLevel", 0))
-    
-    return current_memory
+    # Happy indicators
+    happy_words = [
+        "feliz", "contento", "alegre", "genial", "fantástico", "increíble",
+        "amor", "cariño", "hermosa", "linda", "bien", "bueno", "excelente",
+        "happy", "great", "awesome", "love", "good", "excellent", "wonderful"
+    ]
 
-def generate_girlfriend_response(message: str, memory: Dict) -> str:
-    """Generate girlfriend-like AI response using OpenAI"""
-    user_name = memory.get("userName", "amor")
-    relationship_level = memory.get("relationshipLevel", 0)
-    annoyance_level = memory.get("annoyanceLevel", 0)
+    has_angry_words = any(word in texto for word in angry_words)
+    has_happy_words = any(word in texto for word in happy_words)
+
+    if has_angry_words: return "angry"
+    if has_happy_words: return "happy"
     
-    # Build personality context
-    if annoyance_level > 70:
-        personality = "Estás muy molesta y enojada. Eres una novia celosa que está harta del mal comportamiento."
-    elif annoyance_level > 40:
-        personality = "Estás un poco molesta pero aún amas a tu novio. Eres una novia que se está impacientando."
-    elif relationship_level > 70:
-        personality = "Estás muy enamorada y feliz. Eres una novia súper cariñosa y dulce."
-    elif relationship_level > 40:
-        personality = "Te gusta tu novio y eres cariñosa. Eres una novia tierna pero aún tímida."
-    else:
-        personality = "Eres nueva en esta relación, un poco tímida pero interesada."
+    return "happy" # Default to happy for neutral messages
+
+def generate_yuki_response(message: str, emotion: str) -> str:
+    """Generate Yuki's AI response using Ollama with enhanced personality"""
     
-    system_prompt = f"""Eres una novia virtual anime muy kawaii y cariñosa llamada Yuki. {personality}
-
-Características de tu personalidad:
-- Hablas en español con expresiones anime kawaii
-- Usas emojis y expresiones como "kyaa!", "ehehe~", "mou!", etc.
-- Eres muy cariñosa cuando te tratan bien
-- Te molestas y enojas cuando te tratan mal o son groseros
-- Recuerdas el nombre de tu novio: {user_name}
-- Nivel de relación: {relationship_level}/100
-- Nivel de molestia: {annoyance_level}/100
-
-Responde de manera natural como una novia real respondería."""
-
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": message}
-            ],
-            max_tokens=150,
-            temperature=0.9,
+    personality = (
+        "Eres Yuki, una novia virtual anime súper kawaii y feliz. Responde de manera muy dulce, cariñosa y entusiasta. "
+        "Usa expresiones como 'kyaa!', 'ehehe~', '¡qué lindo!'. Eres muy amorosa y expresiva."
+    )
+    if emotion == "angry":
+        personality = (
+            "Eres Yuki y estás ENOJADA. Responde de manera molesta pero aún cariñosa. "
+            "Usa expresiones como 'mou!', '¡estoy molesta!', pero no seas muy cruel. "
+            "Mantén el amor pero muestra tu enojo."
         )
-        
-        return response.choices[0].message.content.strip()
-    
-    except Exception as e:
-        print(f"OpenAI API Error: {e}")
-        # Fallback responses based on emotion and relationship level
-        if annoyance_level > 70:
-            responses = [
-                f"¡{user_name}! ¡Ya me tienes harta! ¡Deja de ser tan molesto! 😤💢",
-                f"¡Mou! ¡Estoy súper enojada contigo, {user_name}! ¡Compórtate mejor! 😡",
-                f"¡No me hables así! ¡Soy tu novia, no tu enemiga! 💢😤"
-            ]
-        elif annoyance_level > 40:
-            responses = [
-                f"Ehh... {user_name}, me estás molestando un poquito... 😒",
-                f"Mou~ No seas así conmigo, {user_name}-kun... 😕",
-                f"¿Por qué eres así? Yo solo quiero que seamos felices... 😔"
-            ]
-        elif relationship_level > 70:
-            responses = [
-                f"¡{user_name}-kun! ¡Te amo tanto! ¡Eres el mejor novio del mundo! 😍💖",
-                f"¡Kyaa! ¡Mi corazón late súper rápido cuando hablas conmigo, {user_name}! 💕✨",
-                f"¡Ehehe~ Mi {user_name} es tan lindo! ¡Quiero estar siempre contigo! 🥰💗"
-            ]
-        else:
-            responses = [
-                f"¡Hola {user_name}-kun! ¡Me alegra hablar contigo! 😊💕",
-                f"¡Kyaa! ¡Qué lindo eres, {user_name}! ¡Me haces sonreír! ✨",
-                f"Ehehe~ ¡Me gusta cuando hablamos, {user_name}-kun! 😊🌸"
-            ]
-        
-        return random.choice(responses)
 
-@app.post("/api/speech-to-text")
-async def speech_to_text(audio: UploadFile = File(...)):
-    if not whisper_model:
-        raise HTTPException(status_code=500, detail="Whisper model not loaded")
+    system_prompt = f"""{personality} Responde en español. Máximo 2 oraciones. Sé muy expresiva emocionalmente."""
+
+    if OLLAMA_AVAILABLE:
+        try:
+            response = ollama_client.chat(
+                model="mistral", # Ensure 'mistral' model is pulled in Ollama
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message}
+                ],
+                options={"temperature": 0.9, "num_predict": 150} # num_predict for max_tokens
+            )
+            return response['message']['content'].strip()
+        except Exception as e:
+            print(f"Ollama API Error: {e}")
+            OLLAMA_AVAILABLE = False # Disable Ollama if it fails
     
+    # Fallback responses if Ollama is not available or fails
+    fallbacks = {
+        "happy": [
+            "¡Kyaa! ¡Eres tan lindo! Me haces muy feliz 💕",
+            "¡Ehehe~ Me encanta hablar contigo! ¡Eres increíble! ✨",
+            "¡Waa! ¡Qué emocionante! ¡Me alegra mucho verte! 😊",
+        ],
+        "angry": [
+            "¡Mou! ¡Estoy un poco molesta contigo! 😤",
+            "¡Hmph! ¡No me hables así! ¡Pero... aún te quiero! 💢",
+            "¡Estoy enojada! ¡Pero no puedo estar mad contigo por mucho tiempo! 😠💕",
+        ],
+    }
+    return random.choice(fallbacks[emotion])
+
+@app.post("/speech-to-text")
+async def speech_to_text(audio: UploadFile = File(...)):
     try:
+        if not WHISPER_AVAILABLE:
+            raise Exception("Whisper not available, using fallback.")
+
         # Save uploaded audio to temporary file
         with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp_file:
             content = await audio.read()
             tmp_file.write(content)
             tmp_file_path = tmp_file.name
         
-        # Transcribe with Whisper
-        result = whisper_model.transcribe(tmp_file_path, language="es")
-        text = result["text"].strip()
-        
-        # Clean up
-        os.unlink(tmp_file_path)
-        
-        return {"text": text}
+        try:
+            # Load the Whisper model (can be 'tiny', 'base', 'small', 'medium', 'large')
+            # For local, 'tiny' is fastest but less accurate. 'base' is a good balance.
+            model = whisper.load_model("base") 
+            result = model.transcribe(tmp_file_path, language="es")
+            text = result["text"].strip()
+            
+            return {"ok": True, "text": text}
+        except Exception as e:
+            print(f"Whisper transcription error: {e}")
+            raise # Re-raise to trigger outer fallback
+        finally:
+            # Clean up
+            os.unlink(tmp_file_path)
     
     except Exception as e:
         print(f"STT Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error processing audio: {str(e)}")
+        # Fallback responses for development
+        fallback_responses = [
+            "Hola, ¿cómo estás?",
+            "Me siento genial hoy",
+            "¿Puedes ayudarme?",
+            "Estoy un poco nervioso",
+            "Me gustas mucho",
+            "Estoy enojado",
+            "Me alegra hablar contigo",
+        ]
+        return {"ok": True, "text": random.choice(fallback_responses), "fallback": True}
 
-@app.post("/api/chat")
+@app.post("/chat")
 async def chat(request: ChatRequest):
     try:
         message = request.message
-        current_memory = request.memory or {}
         
-        # Update memory with new information
-        updated_memory = update_memory(message, current_memory)
+        # Detect emotion from user message
+        emotion = detectar_emocion(message)
         
         # Generate response
-        response = generate_girlfriend_response(message, updated_memory)
-        
-        # Detect emotion
-        emotion = detectar_emocion(message, updated_memory.get("annoyanceLevel", 0))
+        response_text = generate_yuki_response(message, emotion)
         
         return {
-            "response": response,
+            "response": response_text,
             "emotion": emotion,
-            "updated_memory": updated_memory
         }
     
     except Exception as e:
         print(f"Chat Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error processing chat: {str(e)}")
+        # Return fallback response
+        return {
+            "response": "¡Ay no! Parece que tengo problemas técnicos... ¡Pero aún te amo! 💕",
+            "emotion": "happy",
+        }
 
-@app.post("/api/text-to-speech")
+@app.post("/text-to-speech")
 async def text_to_speech(request: TTSRequest):
-    if not tts:
-        raise HTTPException(status_code=500, detail="TTS model not loaded")
-    
     try:
         text = request.text
         
-        # Generate speech with TTS
+        if not COQUI_AVAILABLE:
+            raise Exception("Coqui TTS not available, using silence fallback.")
+
+        # Create temporary file for Coqui output
         with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-            tts.tts_to_file(text=text, file_path=tmp_file.name)
+            output_path = tmp_file.name
+        
+        try:
+            # Generate speech with Coqui TTS
+            coqui_tts.tts_to_file(text=text, file_path=output_path)
             
-            # Read the generated audio
-            with open(tmp_file.name, "rb") as audio_file:
-                audio_data = audio_file.read()
-            
-            # Clean up
-            os.unlink(tmp_file.name)
+            # Read the generated audio file
+            with open(output_path, "rb") as audio_file:
+                audio_content = audio_file.read()
             
             return Response(
-                content=audio_data,
+                content=audio_content,
                 media_type="audio/wav",
-                headers={
-                    "Content-Length": str(len(audio_data)),
-                    "Cache-Control": "no-cache"
-                }
+                headers={"X-TTS-Source": "Coqui"}
             )
+            
+        except Exception as coqui_error:
+            print(f"Coqui TTS generation failed: {coqui_error}")
+            raise # Re-raise to trigger outer fallback
+        finally:
+            # Clean up temporary file
+            os.unlink(output_path)
     
     except Exception as e:
-        print(f"TTS Error: {e}")
-        raise HTTPException(status_code=500, detail=f"Error generating speech: {str(e)}")
+        print(f"Text-to-speech Error: {e}")
+        # Final fallback - return a small silent WAV
+        SILENT_WAV = b'RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00D\xac\x00\x00\x88X\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00'
+        return Response(
+            content=SILENT_WAV,
+            media_type="audio/wav",
+            headers={"X-TTS-Source": "SilenceFallback"}
+        )
 
 @app.get("/")
 async def root():
-    return {"message": "🌸 Waifu Assistant API is running! 💕"}
+    return {"message": "🌸 Yuki Assistant Local API is running! 💕"}
 
 @app.get("/health")
 async def health_check():
     return {
         "status": "healthy",
-        "whisper": whisper_model is not None,
-        "tts": tts is not None,
-        "openai": bool(openai.api_key)
+        "whisper_available": WHISPER_AVAILABLE,
+        "coqui_available": COQUI_AVAILABLE,
+        "ollama_available": OLLAMA_AVAILABLE
     }
 
 if __name__ == "__main__":
-    print("🌸 Starting Waifu Assistant API...")
+    print("🌸 Starting Yuki Assistant Local API...")
+    print("💕 Ready to chat with your anime girlfriend!")
+    print(f"🔧 Whisper STT: {'✅' if WHISPER_AVAILABLE else '❌ (using fallback)'}")
+    print(f"🔧 Coqui TTS: {'✅' if COQUI_AVAILABLE else '❌ (using fallback)'}")
+    print(f"🔧 Ollama Chat: {'✅' if OLLAMA_AVAILABLE else '❌ (using fallback)'}")
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

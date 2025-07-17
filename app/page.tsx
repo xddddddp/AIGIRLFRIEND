@@ -1,136 +1,173 @@
 "use client"
 
 import type React from "react"
+import { Suspense } from "react" // Import Suspense for VRMViewer
 import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Volume2, Mic, Square, Send, VolumeX, Heart } from "lucide-react"
+import { Volume2, Mic, Square, Send, VolumeX } from "lucide-react"
 import { Input } from "@/components/ui/input"
+import Image from "next/image"
+import dynamic from "next/dynamic" // Import dynamic for VRMViewer
 
-type Emotion = "neutral" | "happy" | "blush" | "angry" | "love" | "annoyed"
+// Dynamically import VRM component to avoid SSR issues
+const VRMViewer = dynamic(() => import("@/components/vrm-viewer"), {
+  ssr: false,
+  loading: () => <div className="w-full h-full bg-purple-900/20 rounded-2xl animate-pulse" />,
+})
+
+type Emotion = "happy" | "angry"
 
 interface Message {
   text: string
   isUser: boolean
   timestamp: Date
+  emotion?: Emotion
 }
 
-interface ConversationMemory {
-  userName?: string
-  topics: string[]
-  preferences: string[]
-  lastEmotion: Emotion
-  relationshipLevel: number // 0-100
-  annoyanceLevel: number // 0-100
-}
-
-export default function WaifuAssistant() {
+export default function YukiAssistant() {
   const [isListening, setIsListening] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
-  const [emotion, setEmotion] = useState<Emotion>("neutral")
-  const [currentMessage, setCurrentMessage] = useState("")
+  const [emotion, setEmotion] = useState<Emotion>("happy")
   const [messages, setMessages] = useState<Message[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
   const [textInput, setTextInput] = useState("")
-  const [memory, setMemory] = useState<ConversationMemory>({
-    topics: [],
-    preferences: [],
-    lastEmotion: "neutral",
-    relationshipLevel: 0,
-    annoyanceLevel: 0,
-  })
-  const [hasGreeted, setHasGreeted] = useState(false)
   const [voiceEnabled, setVoiceEnabled] = useState(true)
-  const [connectionError, setConnectionError] = useState(false)
+  const [hasGreeted, setHasGreeted] = useState(false)
+  const [connectionError, setConnectionError] = useState(false) // State for connection errors
+  const [useVRM, setUseVRM] = useState(false) // State to toggle VRM
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
+  // Backend URL for local FastAPI server
+  const BACKEND_BASE_URL = "http://localhost:8000"
+
   useEffect(() => {
     audioRef.current = new Audio()
+
     // Initial greeting
     if (!hasGreeted) {
       setTimeout(() => {
-        const greeting = "¡Hola mi amor! 💕 Soy tu novia virtual~ ¿Cómo te llamas, cariño? ¡Quiero conocerte mejor! ✨"
-        setCurrentMessage(greeting)
-        setMessages([{ text: greeting, isUser: false, timestamp: new Date() }])
-        setEmotion("love")
-        setHasGreeted(true)
-
+        const greeting = "¡Hola mi amor! Soy Yuki, tu novia virtual. ¿Cómo estás hoy?"
+        addMessage(greeting, false, "happy")
         if (voiceEnabled) {
           speakText(greeting)
         }
+        setHasGreeted(true)
       }, 1000)
     }
   }, [hasGreeted, voiceEnabled])
 
-  const speakText = async (text: string) => {
-    if (!voiceEnabled) return
+  const addMessage = (text: string, isUser: boolean, messageEmotion?: Emotion) => {
+    const message: Message = {
+      text,
+      isUser,
+      timestamp: new Date(),
+      emotion: messageEmotion,
+    }
+    setMessages((prev) => [...prev, message])
+    if (messageEmotion) {
+      setEmotion(messageEmotion)
+    }
+  }
 
+  const recordAndSend = async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    const mediaRecorder = new MediaRecorder(stream)
+    const chunks: Blob[] = []
+
+    mediaRecorder.ondataavailable = (e) => chunks.push(e.data)
+    mediaRecorder.onstop = async () => {
+      const blob = new Blob(chunks, { type: "audio/webm" })
+      const formData = new FormData()
+      formData.append("audio", blob, "recording.webm")
+
+      const res = await fetch(`${BACKEND_BASE_URL}/speech-to-text`, { method: "POST", body: formData })
+      const data = await res.json() // Parse JSON response
+
+      if (!res.ok || !data.ok) {
+        console.error("STT API Error:", data.reason || res.statusText)
+        setConnectionError(true)
+        addMessage("Lo siento, no pude entenderte bien. ¿Podrías repetirlo?", false, "happy")
+        return // Stop processing if STT failed
+      }
+
+      console.log("Texto transcrito:", data.text)
+      setConnectionError(false) // Clear error if successful
+
+      if (data.text?.trim()) {
+        await processMessage(data.text.trim())
+      }
+    }
+
+    mediaRecorder.start()
+    setTimeout(() => mediaRecorder.stop(), 5000) // 5 segundos
+  }
+
+  const playResponse = async (text: string) => {
     try {
-      setIsSpeaking(true)
-      const response = await fetch("http://localhost:8000/api/text-to-speech", {
+      const res = await fetch(`${BACKEND_BASE_URL}/text-to-speech`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       })
 
-      if (response.ok) {
-        const audioBuffer = await response.arrayBuffer()
-        const audioBlob = new Blob([audioBuffer], { type: "audio/wav" })
-        const audioUrl = URL.createObjectURL(audioBlob)
-
-        if (audioRef.current) {
-          audioRef.current.src = audioUrl
-          audioRef.current.onended = () => {
-            setIsSpeaking(false)
-            URL.revokeObjectURL(audioUrl)
-          }
-          audioRef.current.onerror = () => {
-            console.error("Audio playback error")
-            setIsSpeaking(false)
-            URL.revokeObjectURL(audioUrl)
-          }
-          await audioRef.current.play()
-        }
-      } else {
-        throw new Error("TTS response not ok")
+      if (!res.ok) {
+        const errorBody = await res.text()
+        console.error("TTS HTTP Error:", res.status, errorBody)
+        throw new Error(`TTS API failed: ${res.status}`)
       }
-    } catch (error) {
-      console.error("Error playing speech:", error)
+
+      const blob = await res.blob()
+
+      // Relaxed sanity check: allow very small blobs, but still check for empty
+      if (blob.size < 1000 && (blob.type === "audio/mpeg" || blob.type === "audio/wav")) {
+        console.warn("TTS returned a very small audio blob, might be empty or invalid:", blob.size, "bytes")
+      }
+
+      const url = URL.createObjectURL(blob)
+
+      if (!audioRef.current) audioRef.current = new Audio()
+      const player = audioRef.current
+      player.src = url
+      player.onended = () => {
+        URL.revokeObjectURL(url)
+        setIsSpeaking(false)
+      }
+      player.onerror = (e) => {
+        console.error("Audio playback error:", e)
+        URL.revokeObjectURL(url)
+        setIsSpeaking(false)
+        setConnectionError(true) // Indicate a playback error
+      }
+
+      await player.play()
+      setConnectionError(false) // Clear error if successful
+    } catch (err) {
+      console.error("playResponse error:", err)
       setIsSpeaking(false)
-      setConnectionError(true)
+      setConnectionError(true) // Indicate a TTS or network error
+      addMessage("¡Ay no! Parece que tengo problemas con mi voz... ¡Pero aún te amo! 💕", false, "happy")
     }
+  }
+
+  const speakText = async (text: string) => {
+    if (!voiceEnabled || !text.trim()) return
+    setIsSpeaking(true)
+    await playResponse(text) // playResponse handles setting isSpeaking to false on end/error
   }
 
   const startListening = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: "audio/webm;codecs=opus",
-      })
-      mediaRecorderRef.current = mediaRecorder
-      audioChunksRef.current = []
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data)
-        }
-      }
-
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" })
-        await processAudio(audioBlob)
-        stream.getTracks().forEach((track) => track.stop())
-      }
-
-      mediaRecorder.start(1000) // Record in 1-second chunks
       setIsListening(true)
-      setConnectionError(false)
+      await recordAndSend()
     } catch (error) {
-      console.error("Error accessing microphone:", error)
+      console.error("Microphone access error:", error)
       alert("No se pudo acceder al micrófono. Por favor, permite el acceso.")
+    } finally {
+      setIsListening(false)
     }
   }
 
@@ -141,85 +178,36 @@ export default function WaifuAssistant() {
     }
   }
 
-  const processAudio = async (audioBlob: Blob) => {
-    setIsProcessing(true)
-
-    try {
-      const formData = new FormData()
-      formData.append("audio", audioBlob, "audio.webm")
-
-      const sttResponse = await fetch("http://localhost:8000/api/speech-to-text", {
-        method: "POST",
-        body: formData,
-      })
-
-      if (!sttResponse.ok) {
-        throw new Error(`STT Error: ${sttResponse.status}`)
-      }
-
-      const { text: userText } = await sttResponse.json()
-
-      if (userText && userText.trim()) {
-        await processMessage(userText.trim())
-      }
-    } catch (error) {
-      console.error("Error processing audio:", error)
-      setConnectionError(true)
-    } finally {
-      setIsProcessing(false)
-    }
-  }
-
   const processMessage = async (message: string) => {
     setIsProcessing(true)
 
     try {
-      // Add user message
-      const userMessage: Message = { text: message, isUser: true, timestamp: new Date() }
-      setMessages((prev) => [...prev, userMessage])
+      addMessage(message, true)
 
-      // Send to AI with memory context
-      const chatResponse = await fetch("http://localhost:8000/api/chat", {
+      const response = await fetch(`${BACKEND_BASE_URL}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message,
-          memory,
-          conversation_history: messages.slice(-10), // Last 10 messages for context
-        }),
+        body: JSON.stringify({ message }),
       })
 
-      if (!chatResponse.ok) {
-        throw new Error(`Chat Error: ${chatResponse.status}`)
+      if (!response.ok) {
+        const errorBody = await response.text()
+        console.error("Chat HTTP Error:", response.status, errorBody)
+        throw new Error(`Chat API failed: ${response.status}`)
       }
 
-      const { response: aiText, emotion: detectedEmotion, updated_memory } = await chatResponse.json()
+      const { response: aiText, emotion: detectedEmotion } = await response.json()
 
-      // Update memory
-      if (updated_memory) {
-        setMemory(updated_memory)
-      }
-
-      // Add AI message
-      const aiMessage: Message = { text: aiText, isUser: false, timestamp: new Date() }
-      setMessages((prev) => [...prev, aiMessage])
-      setCurrentMessage(aiText)
-      setEmotion(detectedEmotion || "neutral")
-
-      // Auto-speak AI response if voice is enabled
+      addMessage(aiText, false, detectedEmotion)
       if (voiceEnabled) {
         await speakText(aiText)
       }
-
-      setConnectionError(false)
+      setConnectionError(false) // Clear error if successful
     } catch (error) {
-      console.error("Error processing message:", error)
-      setConnectionError(true)
-
-      // Fallback response
-      const fallbackMsg = "¡Ay no! Parece que tengo problemas técnicos... ¡Pero aún te amo! 💕"
-      setCurrentMessage(fallbackMsg)
-      setMessages((prev) => [...prev, { text: fallbackMsg, isUser: false, timestamp: new Date() }])
+      console.error("Message processing error:", error)
+      setConnectionError(true) // Indicate a chat API or network error
+      const fallback = "Lo siento, tengo problemas técnicos... ¡Pero aún te amo! 💕"
+      addMessage(fallback, false, "happy")
     } finally {
       setIsProcessing(false)
     }
@@ -242,103 +230,62 @@ export default function WaifuAssistant() {
     setVoiceEnabled(!voiceEnabled)
   }
 
-  const getEmotionPlaceholder = (emotion: Emotion) => {
-    const emotionStyles = {
-      neutral: "opacity-80 scale-100",
-      happy: "opacity-100 brightness-110 scale-105",
-      blush: "opacity-100 brightness-110 hue-rotate-15 scale-105",
-      angry: "opacity-100 brightness-90 hue-rotate-345 scale-95 animate-pulse",
-      love: "opacity-100 brightness-125 scale-110",
-      annoyed: "opacity-90 brightness-85 scale-95",
-    }
+  const getCharacterDisplay = () => {
+    const isAngry = emotion === "angry"
 
-    const emotionColors = {
-      neutral: "from-purple-900/20 to-purple-800/40",
-      happy: "from-pink-500/30 to-purple-500/40",
-      blush: "from-rose-500/30 to-pink-500/40",
-      angry: "from-red-500/40 to-orange-500/50",
-      love: "from-pink-400/40 to-rose-400/50",
-      annoyed: "from-gray-500/30 to-purple-500/30",
-    }
-
-    const emotionEmojis = {
-      neutral: "😌",
-      happy: "😊",
-      blush: "😊💕",
-      angry: "😤💢",
-      love: "😍💖",
-      annoyed: "😒",
+    if (useVRM) {
+      return (
+        <Suspense fallback={<div className="w-full h-full bg-purple-900/20 rounded-2xl animate-pulse" />}>
+          <VRMViewer emotion={emotion} isSpeaking={isSpeaking} />
+        </Suspense>
+      )
     }
 
     return (
-      <div className={`w-full h-full transition-all duration-700 ${emotionStyles[emotion]}`}>
-        <div
-          className={`w-full h-full bg-gradient-to-b ${emotionColors[emotion]} rounded-2xl flex flex-col items-center justify-center relative overflow-hidden border-2 ${
-            emotion === "love"
-              ? "border-pink-400/50"
-              : emotion === "angry"
-                ? "border-red-400/50"
-                : "border-purple-400/30"
+      <div className="relative w-full h-full rounded-2xl overflow-hidden">
+        <Image
+          src={isAngry ? "/images/angry.jpeg" : "/images/happy.jpeg"}
+          alt={isAngry ? "Angry Yuki" : "Happy Yuki"}
+          fill
+          className={`object-cover transition-all duration-700 ${
+            isAngry ? "brightness-90 hue-rotate-15" : "brightness-110"
           }`}
-        >
-          {/* Animated background effect */}
-          <div className="absolute inset-0 opacity-20">
-            <div className="absolute top-1/4 left-1/4 w-20 h-20 bg-white rounded-full blur-xl animate-pulse"></div>
-            <div
-              className="absolute bottom-1/4 right-1/4 w-16 h-16 bg-white rounded-full blur-lg animate-pulse"
-              style={{ animationDelay: "1s" }}
-            ></div>
+          priority
+        />
+
+        {/* Character info overlay */}
+        <div className="absolute bottom-4 left-4 right-4 text-center">
+          <div className="bg-black/50 backdrop-blur-sm rounded-lg p-2">
+            <div className="text-white font-semibold text-lg">Yuki-chan</div>
+            <div className="text-white/80 text-sm capitalize">{emotion}</div>
           </div>
+        </div>
 
-          {/* Character placeholder */}
-          <div className="relative z-10 text-center text-white">
-            <div className="text-6xl mb-3 filter drop-shadow-lg">{emotionEmojis[emotion]}</div>
-            <div className="text-lg font-semibold mb-2 opacity-90">
-              {memory.userName ? `${memory.userName}-kun 💕` : "Mi Amor"}
-            </div>
-            <div className="text-xs opacity-60 mb-1">VRM Model Ready</div>
-            <div className="text-xs opacity-40">
-              Nivel: {memory.relationshipLevel || 0} | {emotion}
-            </div>
-          </div>
-
-          {/* Speaking animation */}
-          {isSpeaking && (
-            <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2">
-              <div className="flex space-x-1">
-                {[...Array(5)].map((_, i) => (
-                  <div
-                    key={i}
-                    className="w-1 bg-white rounded-full animate-pulse"
-                    style={{
-                      height: `${Math.random() * 15 + 8}px`,
-                      animationDelay: `${i * 0.1}s`,
-                      animationDuration: "0.4s",
-                    }}
-                  ></div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Love hearts animation */}
-          {emotion === "love" && (
-            <div className="absolute inset-0 pointer-events-none">
-              {[...Array(3)].map((_, i) => (
-                <Heart
+        {/* Speaking animation overlay */}
+        {isSpeaking && (
+          <div className="absolute top-4 left-1/2 transform -translate-x-1/2">
+            <div className="flex space-x-1 bg-black/50 rounded-full px-3 py-2">
+              {[...Array(5)].map((_, i) => (
+                <div
                   key={i}
-                  className="absolute text-pink-300 animate-bounce"
-                  size={16}
+                  className="w-1 bg-green-400 rounded-full animate-pulse"
                   style={{
-                    top: `${20 + i * 20}%`,
-                    left: `${10 + i * 30}%`,
-                    animationDelay: `${i * 0.5}s`,
+                    height: `${Math.random() * 15 + 8}px`,
+                    animationDelay: `${i * 0.1}s`,
+                    animationDuration: "0.4s",
                   }}
                 />
               ))}
             </div>
-          )}
-        </div>
+          </div>
+        )}
+
+        {/* Angry effects */}
+        {isAngry && (
+          <div className="absolute top-4 right-4">
+            <div className="text-red-400 text-2xl animate-pulse">💢</div>
+          </div>
+        )}
       </div>
     )
   }
@@ -348,64 +295,66 @@ export default function WaifuAssistant() {
       {/* Connection Error Banner */}
       {connectionError && (
         <div className="bg-red-600/20 border-b border-red-500/30 p-2 text-center">
-          <p className="text-red-300 text-sm">⚠️ Error de conexión - Verifica que el servidor esté ejecutándose</p>
+          <p className="text-red-300 text-sm">
+            ⚠️ Error de conexión. Asegúrate que el backend esté corriendo en http://localhost:8000
+          </p>
         </div>
       )}
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col items-center justify-center p-4 relative">
+      <div className="flex-1 flex flex-col p-4">
         {/* Background Effects */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-1/4 left-1/4 w-32 h-32 bg-purple-500/10 rounded-full blur-3xl animate-pulse"></div>
+          <div className="absolute top-1/4 left-1/4 w-32 h-32 bg-purple-500/10 rounded-full blur-3xl animate-pulse" />
           <div
             className="absolute bottom-1/4 right-1/4 w-40 h-40 bg-pink-500/10 rounded-full blur-3xl animate-pulse"
             style={{ animationDelay: "2s" }}
-          ></div>
+          />
         </div>
 
-        {/* Memory Display */}
-        {memory.userName && (
-          <div className="absolute top-4 left-4 right-4 bg-gray-800/60 backdrop-blur-sm rounded-lg p-3 text-xs text-gray-300">
-            <div className="font-semibold text-purple-300 mb-1">💕 Mi {memory.userName}</div>
-            <div className="flex justify-between">
-              <span>Amor: {memory.relationshipLevel || 0}%</span>
-              <span>Molestia: {memory.annoyanceLevel || 0}%</span>
-            </div>
-          </div>
-        )}
-
-        {/* Chat Messages */}
-        {messages.length > 0 && (
-          <div className="absolute top-20 left-4 right-4 max-h-32 overflow-y-auto">
-            <div className="space-y-2">
-              {messages.slice(-3).map((msg, idx) => (
-                <Card
-                  key={idx}
-                  className={`p-3 max-w-xs transition-all duration-300 ${
-                    msg.isUser
-                      ? "ml-auto bg-purple-600/20 border-purple-500/30 text-purple-100"
-                      : "mr-auto bg-gray-800/40 border-gray-600/30 text-gray-200"
-                  }`}
-                >
-                  <p className="text-sm">{msg.text}</p>
-                </Card>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Avatar Container */}
-        <div className="relative z-10 w-64 h-80 mb-6">
+        {/* Character Display */}
+        <div className="relative z-10 w-64 h-80 mx-auto mb-4">
           <div className={`w-full h-full transition-all duration-500 ${isProcessing ? "animate-pulse" : ""}`}>
-            {getEmotionPlaceholder(emotion)}
+            {getCharacterDisplay()}
           </div>
 
           {/* Processing Indicator */}
           {isProcessing && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/20 rounded-2xl">
-              <div className="animate-spin rounded-full h-10 w-10 border-2 border-purple-400 border-t-transparent"></div>
+            <div className="absolute inset-0 flex items-center justify-center bg-black/20 rounded-2xl z-20">
+              <div className="animate-spin rounded-full h-10 w-10 border-2 border-purple-400 border-t-transparent" />
             </div>
           )}
+        </div>
+
+        {/* VRM Toggle Button */}
+        <Button
+          onClick={() => setUseVRM(!useVRM)}
+          variant="ghost"
+          size="sm"
+          className="mb-4 text-purple-300 hover:text-purple-100 mx-auto"
+        >
+          {useVRM ? "Usar Imagen 2D" : "Usar Modelo 3D"}
+        </Button>
+
+        {/* Chat Messages - Now positioned below the image */}
+        <div className="flex-1 overflow-y-auto mb-4 z-10 max-h-48">
+          <div className="space-y-2">
+            {messages.map((msg, idx) => (
+              <Card
+                key={idx}
+                className={`p-3 max-w-xs transition-all duration-300 ${
+                  msg.isUser
+                    ? "ml-auto bg-purple-600/20 border-purple-500/30 text-purple-100"
+                    : "mr-auto bg-gray-800/40 border-gray-600/30 text-gray-200"
+                }`}
+              >
+                <p className="text-sm">{msg.text}</p>
+                <div className="text-xs opacity-50 mt-1">
+                  {msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </div>
+              </Card>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -467,19 +416,19 @@ export default function WaifuAssistant() {
               <div className="inline-flex items-center space-x-2 text-sm text-gray-400">
                 {isListening && (
                   <>
-                    <div className="w-2 h-2 bg-red-400 rounded-full animate-pulse"></div>
+                    <div className="w-2 h-2 bg-red-400 rounded-full animate-pulse" />
                     <span>Te escucho, amor...</span>
                   </>
                 )}
                 {isProcessing && (
                   <>
-                    <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse"></div>
+                    <div className="w-2 h-2 bg-purple-400 rounded-full animate-pulse" />
                     <span>Pensando en ti...</span>
                   </>
                 )}
                 {isSpeaking && (
                   <>
-                    <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                    <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
                     <span>Hablándote con amor...</span>
                   </>
                 )}

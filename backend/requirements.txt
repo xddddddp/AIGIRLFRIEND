@@ -1,10 +1,9 @@
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
-openai-whisper==20231117
-TTS==0.22.0
-torch==2.1.0
-torchaudio==2.1.0
-numpy==1.24.3
+whisper==1.1.10 # For local Whisper STT
+TTS==0.22.0 # For local Coqui TTS
+torch==2.1.0 # Required by TTS
+torchaudio==2.1.0 # Required by TTS
+ollama==0.1.8 # For local Mistral LLM
 pydantic==2.5.0
-openai==0.28.1
